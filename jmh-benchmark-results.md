@@ -1,0 +1,562 @@
+# Benchmark Results: Default vs AAL vs EagerInputFile
+
+### Benchmark Setup (JMH)
+
+**Machine:** AWS EC2 (same region as the S3 bucket to minimize network latency)
+
+| Property | Value |
+|----------|-------|
+| Instance type | r5.4xlarge |
+| vCPUs | 16 |
+| Memory | 128 GB |
+| Network | Up to 10 Gbps |
+| Storage | 50 GB gp3 EBS |
+| AMI | Amazon Linux 2023 |
+| Region | ap-south-1 (Mumbai) |
+
+**Benchmark:** [IcebergDataCompactionBenchmark](https://github.com/apache/iceberg/blob/839b22647ce5aa08e27220bbe85cde1292129fea/spark/v4.1/spark/src/jmh/java/org/apache/iceberg/spark/action/IcebergDataCompactionBenchmark.java#L57) extended with `aalEnabled` and `eagerThreshold` params for this comparison
+- Warmup iterations: **5**
+- Measurement iterations: **10**
+- Total rows: **20,000,000 (20 million)**
+
+### Results
+
+| Number of Files | Default (s) | AAL = true (s) | EagerInputFile = true (s) | EagerInputFile Improvement vs Default | EagerInputFile Improvement vs AAL |
+|----------------:|------------:|---------------:|--------------------------:|--------------------------------------:|----------------------------------:|
+| 250  | 45.104 | 29.671 | 27.311 | **39.45%** | **7.95%** |
+| 500  | 77.788 | 54.030 | 46.553 | **40.15%** | **13.84%** |
+| 1000 | 163.238 | 107.138 | 95.429 | **41.54%** | **10.93%** |
+| 2000 | 312.252 | 195.158 | 179.351 | **42.56%** | **8.10%** |
+
+#### Graphical Comparison
+
+<img width="2970" height="1769" alt="iceberg_compaction_runtime_axis" src="https://github.com/user-attachments/assets/469dedde-4693-4620-861b-b92e770764d5" />
+
+### S3 Request Analysis
+
+The number of GET/HEAD requests observed from the S3 bucket logs is computed as:
+> `Total Requests / (Total Iterations × Number of Files)`
+
+| Configuration | GET/file | HEAD/file | Total Calls/file |
+|---------------|----------|-----------|------------------|
+| Default | 3 | 0 | 3 |
+| AAL = true | 1 | 1 | 2 |
+| EagerInputFile = true | 1 | 0 | **1** |
+
+> **Note on scope of these benchmarks:** A reviewer correctly pointed out that for any benchmark asserting performance gains over S3, the comparison should include the [AWS S3A accelerated input stream with ranged reads](https://github.com/apache/hadoop-cloudstore/blob/main/src/site/markdown/auditlogs.md), since that already does a lot of this itself. Doing it in Iceberg makes it visible and controllable, as well as consistently cross-store. Benchmarking against the AWS accelerator would likely show less dramatic speedups and be more honest in the process. The S3 request counts above (verified via bucket logging + user-agent filtering) confirm the real savings independent of execution time.
+
+---
+
+### Raw JMH Output
+
+<details>
+<summary>Click to expand full JMH output</summary>
+
+```
+# JMH version: 1.37
+# VM version: JDK 17.0.19, OpenJDK 64-Bit Server VM, 17.0.19+10-LTS
+# VM invoker: /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java
+# VM options: -Xmx32g --add-opens java.base/java.io=ALL-UNNAMED --add-opens java.base/java.lang.invoke=ALL-UNNAMED --add-opens java.base/java.lang.reflect=ALL-UNNAMED --add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.math=ALL-UNNAMED --add-opens java.base/java.net=ALL-UNNAMED --add-opens java.base/java.nio=ALL-UNNAMED --add-opens java.base/java.text=ALL-UNNAMED --add-opens java.base/java.time=ALL-UNNAMED --add-opens java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens java.base/java.util.concurrent=ALL-UNNAMED --add-opens java.base/java.util.regex=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/jdk.internal.ref=ALL-UNNAMED --add-opens java.base/jdk.internal.reflect=ALL-UNNAMED --add-opens java.sql/java.sql=ALL-UNNAMED --add-opens java.base/sun.util.calendar=ALL-UNNAMED --add-opens java.base/sun.nio.ch=ALL-UNNAMED --add-opens java.base/sun.nio.cs=ALL-UNNAMED --add-opens java.base/sun.security.action=ALL-UNNAMED
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, single-shot each
+# Measurement: 10 iterations, single-shot each
+# Timeout: 1 hr per iteration
+# Threads: 1 thread
+# Benchmark mode: Single shot invocation time
+# Benchmark: org.apache.iceberg.spark.action.IcebergDataCompactionBenchmark.rewriteDataFiles
+# Parameters: (aNumFiles = 250, bAalEnabled = false, cEagerThreshold = 0)
+
+# Run progress: 0.00% complete, ETA 00:00:00
+# Fork: 1 of 1
+# Warmup Iteration   1: 44.055 s/op
+# Warmup Iteration   2: 44.446 s/op
+# Warmup Iteration   3: 44.203 s/op
+# Warmup Iteration   4: 45.106 s/op
+# Warmup Iteration   5: 46.018 s/op
+Iteration   1: 46.441 s/op
+Iteration   2: 44.857 s/op
+Iteration   3: 44.913 s/op
+Iteration   4: 44.870 s/op
+Iteration   5: 44.532 s/op
+Iteration   6: 45.237 s/op
+Iteration   7: 45.065 s/op
+Iteration   8: 43.892 s/op
+Iteration   9: 45.164 s/op
+Iteration  10: 46.063 s/op
+
+Result "org.apache.iceberg.spark.action.IcebergDataCompactionBenchmark.rewriteDataFiles":
+  N = 10
+  mean =     45.104 ±(99.9%) 1.090 s/op
+
+  Histogram, s/op:
+    [43.750, 44.000) = 1
+    [44.500, 44.750) = 1
+    [44.750, 45.000) = 3
+    [45.000, 45.250) = 3
+    [46.000, 46.250) = 1
+    [46.250, 46.500) = 1
+
+  Percentiles, s/op:
+      p(0.0000) =     43.892 s/op
+     p(50.0000) =     44.989 s/op
+     p(90.0000) =     46.404 s/op
+    p(100.0000) =     46.441 s/op
+
+
+# Parameters: (aNumFiles = 250, bAalEnabled = false, cEagerThreshold = 1048576)
+# Run progress: 6.25% complete, ETA 03:11:06
+# Warmup Iteration   1: 32.690 s/op
+# Warmup Iteration   2: 30.784 s/op
+# Warmup Iteration   3: 29.914 s/op
+# Warmup Iteration   4: 28.042 s/op
+# Warmup Iteration   5: 28.364 s/op
+Iteration   1: 27.289 s/op
+Iteration   2: 27.099 s/op
+Iteration   3: 27.956 s/op
+Iteration   4: 27.344 s/op
+Iteration   5: 28.901 s/op
+Iteration   6: 27.149 s/op
+Iteration   7: 27.050 s/op
+Iteration   8: 27.282 s/op
+Iteration   9: 25.985 s/op
+Iteration  10: 27.051 s/op
+
+Result "org.apache.iceberg.spark.action.IcebergDataCompactionBenchmark.rewriteDataFiles":
+  N = 10
+  mean =     27.311 ±(99.9%) 1.117 s/op
+
+  Percentiles, s/op:
+      p(0.0000) =     25.985 s/op
+     p(50.0000) =     27.216 s/op
+     p(90.0000) =     28.806 s/op
+    p(100.0000) =     28.901 s/op
+
+
+# Parameters: (aNumFiles = 250, bAalEnabled = true, cEagerThreshold = 0)
+# Run progress: 12.50% complete, ETA 02:29:36
+# Warmup Iteration   1: 33.888 s/op
+# Warmup Iteration   2: 31.375 s/op
+# Warmup Iteration   3: 29.760 s/op
+# Warmup Iteration   4: 30.329 s/op
+# Warmup Iteration   5: 30.064 s/op
+Iteration   1: 29.726 s/op
+Iteration   2: 28.592 s/op
+Iteration   3: 29.356 s/op
+Iteration   4: 30.611 s/op
+Iteration   5: 29.117 s/op
+Iteration   6: 29.796 s/op
+Iteration   7: 30.180 s/op
+Iteration   8: 29.999 s/op
+Iteration   9: 29.713 s/op
+Iteration  10: 29.619 s/op
+
+Result "org.apache.iceberg.spark.action.IcebergDataCompactionBenchmark.rewriteDataFiles":
+  N = 10
+  mean =     29.671 ±(99.9%) 0.850 s/op
+
+  Percentiles, s/op:
+      p(0.0000) =     28.592 s/op
+     p(50.0000) =     29.719 s/op
+     p(90.0000) =     30.568 s/op
+    p(100.0000) =     30.611 s/op
+
+
+# Parameters: (aNumFiles = 250, bAalEnabled = true, cEagerThreshold = 1048576)
+# Run progress: 18.75% complete, ETA 02:11:56
+# Warmup Iteration   1: 32.950 s/op
+# Warmup Iteration   2: 31.851 s/op
+# Warmup Iteration   3: 32.575 s/op
+# Warmup Iteration   4: 30.846 s/op
+# Warmup Iteration   5: 31.535 s/op
+Iteration   1: 30.229 s/op
+Iteration   2: 30.350 s/op
+Iteration   3: 30.095 s/op
+Iteration   4: 29.997 s/op
+Iteration   5: 30.210 s/op
+Iteration   6: 30.406 s/op
+Iteration   7: 30.430 s/op
+Iteration   8: 29.608 s/op
+Iteration   9: 29.947 s/op
+Iteration  10: 29.574 s/op
+
+Result "org.apache.iceberg.spark.action.IcebergDataCompactionBenchmark.rewriteDataFiles":
+  N = 10
+  mean =     30.084 ±(99.9%) 0.463 s/op
+
+  Percentiles, s/op:
+      p(0.0000) =     29.574 s/op
+     p(50.0000) =     30.152 s/op
+     p(90.0000) =     30.427 s/op
+    p(100.0000) =     30.430 s/op
+
+
+# Parameters: (aNumFiles = 500, bAalEnabled = false, cEagerThreshold = 0)
+# Run progress: 25.00% complete, ETA 01:59:10
+# Warmup Iteration   1: 82.009 s/op
+# Warmup Iteration   2: 82.303 s/op
+# Warmup Iteration   3: 80.744 s/op
+# Warmup Iteration   4: 76.618 s/op
+# Warmup Iteration   5: 79.149 s/op
+Iteration   1: 78.585 s/op
+Iteration   2: 75.925 s/op
+Iteration   3: 76.788 s/op
+Iteration   4: 74.680 s/op
+Iteration   5: 76.555 s/op
+Iteration   6: 78.463 s/op
+Iteration   7: 79.938 s/op
+Iteration   8: 76.471 s/op
+Iteration   9: 79.311 s/op
+Iteration  10: 81.167 s/op
+
+Result "org.apache.iceberg.spark.action.IcebergDataCompactionBenchmark.rewriteDataFiles":
+  N = 10
+  mean =     77.788 ±(99.9%) 3.058 s/op
+
+  Percentiles, s/op:
+      p(0.0000) =     74.680 s/op
+     p(50.0000) =     77.626 s/op
+     p(90.0000) =     81.044 s/op
+    p(100.0000) =     81.167 s/op
+
+
+# Parameters: (aNumFiles = 500, bAalEnabled = false, cEagerThreshold = 1048576)
+# Run progress: 31.25% complete, ETA 02:14:34
+# Warmup Iteration   1: 47.815 s/op
+# Warmup Iteration   2: 45.874 s/op
+# Warmup Iteration   3: 47.075 s/op
+# Warmup Iteration   4: 46.215 s/op
+# Warmup Iteration   5: 44.603 s/op
+Iteration   1: 45.898 s/op
+Iteration   2: 46.089 s/op
+Iteration   3: 45.904 s/op
+Iteration   4: 45.851 s/op
+Iteration   5: 46.627 s/op
+Iteration   6: 46.629 s/op
+Iteration   7: 46.323 s/op
+Iteration   8: 46.886 s/op
+Iteration   9: 46.373 s/op
+Iteration  10: 48.947 s/op
+
+Result "org.apache.iceberg.spark.action.IcebergDataCompactionBenchmark.rewriteDataFiles":
+  N = 10
+  mean =     46.553 ±(99.9%) 1.380 s/op
+
+  Percentiles, s/op:
+      p(0.0000) =     45.851 s/op
+     p(50.0000) =     46.348 s/op
+     p(90.0000) =     48.741 s/op
+    p(100.0000) =     48.947 s/op
+
+
+# Parameters: (aNumFiles = 500, bAalEnabled = true, cEagerThreshold = 0)
+# Run progress: 37.50% complete, ETA 02:04:26
+# Warmup Iteration   1: 56.253 s/op
+# Warmup Iteration   2: 52.719 s/op
+# Warmup Iteration   3: 53.835 s/op
+# Warmup Iteration   4: 54.334 s/op
+# Warmup Iteration   5: 52.930 s/op
+Iteration   1: 52.381 s/op
+Iteration   2: 53.502 s/op
+Iteration   3: 54.023 s/op
+Iteration   4: 54.093 s/op
+Iteration   5: 55.720 s/op
+Iteration   6: 53.553 s/op
+Iteration   7: 54.573 s/op
+Iteration   8: 55.449 s/op
+Iteration   9: 53.505 s/op
+Iteration  10: 53.500 s/op
+
+Result "org.apache.iceberg.spark.action.IcebergDataCompactionBenchmark.rewriteDataFiles":
+  N = 10
+  mean =     54.030 ±(99.9%) 1.508 s/op
+
+  Percentiles, s/op:
+      p(0.0000) =     52.381 s/op
+     p(50.0000) =     53.788 s/op
+     p(90.0000) =     55.693 s/op
+    p(100.0000) =     55.720 s/op
+
+
+# Parameters: (aNumFiles = 500, bAalEnabled = true, cEagerThreshold = 1048576)
+# Run progress: 43.75% complete, ETA 01:55:39
+# Warmup Iteration   1: 56.432 s/op
+# Warmup Iteration   2: 55.486 s/op
+# Warmup Iteration   3: 55.989 s/op
+# Warmup Iteration   4: 53.997 s/op
+# Warmup Iteration   5: 54.994 s/op
+Iteration   1: 55.026 s/op
+Iteration   2: 54.457 s/op
+Iteration   3: 52.693 s/op
+Iteration   4: 52.193 s/op
+Iteration   5: 55.553 s/op
+Iteration   6: 54.009 s/op
+Iteration   7: 54.534 s/op
+Iteration   8: 54.082 s/op
+Iteration   9: 54.671 s/op
+Iteration  10: 56.437 s/op
+
+Result "org.apache.iceberg.spark.action.IcebergDataCompactionBenchmark.rewriteDataFiles":
+  N = 10
+  mean =     54.365 ±(99.9%) 1.885 s/op
+
+  Percentiles, s/op:
+      p(0.0000) =     52.193 s/op
+     p(50.0000) =     54.495 s/op
+     p(90.0000) =     56.349 s/op
+    p(100.0000) =     56.437 s/op
+
+
+# Parameters: (aNumFiles = 1000, bAalEnabled = false, cEagerThreshold = 0)
+# Run progress: 50.00% complete, ETA 01:45:24
+# Warmup Iteration   1: 162.193 s/op
+# Warmup Iteration   2: 159.772 s/op
+# Warmup Iteration   3: 164.195 s/op
+# Warmup Iteration   4: 153.862 s/op
+# Warmup Iteration   5: 154.669 s/op
+Iteration   1: 157.924 s/op
+Iteration   2: 161.133 s/op
+Iteration   3: 162.438 s/op
+Iteration   4: 160.279 s/op
+Iteration   5: 162.090 s/op
+Iteration   6: 159.050 s/op
+Iteration   7: 162.336 s/op
+Iteration   8: 170.702 s/op
+Iteration   9: 166.356 s/op
+Iteration  10: 170.074 s/op
+
+Result "org.apache.iceberg.spark.action.IcebergDataCompactionBenchmark.rewriteDataFiles":
+  N = 10
+  mean =    163.238 ±(99.9%) 6.646 s/op
+
+  Percentiles, s/op:
+      p(0.0000) =    157.924 s/op
+     p(50.0000) =    162.213 s/op
+     p(90.0000) =    170.639 s/op
+    p(100.0000) =    170.702 s/op
+
+
+# Parameters: (aNumFiles = 1000, bAalEnabled = false, cEagerThreshold = 1048576)
+# Run progress: 56.25% complete, ETA 01:55:10
+# Warmup Iteration   1: 101.099 s/op
+# Warmup Iteration   2: 98.391 s/op
+# Warmup Iteration   3: 103.258 s/op
+# Warmup Iteration   4: 97.514 s/op
+# Warmup Iteration   5: 97.887 s/op
+Iteration   1: 98.374 s/op
+Iteration   2: 98.196 s/op
+Iteration   3: 94.410 s/op
+Iteration   4: 95.767 s/op
+Iteration   5: 95.052 s/op
+Iteration   6: 95.536 s/op
+Iteration   7: 94.990 s/op
+Iteration   8: 93.874 s/op
+Iteration   9: 94.457 s/op
+Iteration  10: 93.632 s/op
+
+Result "org.apache.iceberg.spark.action.IcebergDataCompactionBenchmark.rewriteDataFiles":
+  N = 10
+  mean =     95.429 ±(99.9%) 2.490 s/op
+
+  Percentiles, s/op:
+      p(0.0000) =     93.632 s/op
+     p(50.0000) =     95.021 s/op
+     p(90.0000) =     98.356 s/op
+    p(100.0000) =     98.374 s/op
+
+
+# Parameters: (aNumFiles = 1000, bAalEnabled = true, cEagerThreshold = 0)
+# Run progress: 62.50% complete, ETA 01:44:40
+# Warmup Iteration   1: 107.286 s/op
+# Warmup Iteration   2: 105.757 s/op
+# Warmup Iteration   3: 104.002 s/op
+# Warmup Iteration   4: 105.375 s/op
+# Warmup Iteration   5: 107.828 s/op
+Iteration   1: 105.408 s/op
+Iteration   2: 107.245 s/op
+Iteration   3: 106.713 s/op
+Iteration   4: 108.393 s/op
+Iteration   5: 106.092 s/op
+Iteration   6: 107.348 s/op
+Iteration   7: 109.048 s/op
+Iteration   8: 106.768 s/op
+Iteration   9: 108.102 s/op
+Iteration  10: 106.262 s/op
+
+Result "org.apache.iceberg.spark.action.IcebergDataCompactionBenchmark.rewriteDataFiles":
+  N = 10
+  mean =    107.138 ±(99.9%) 1.700 s/op
+
+  Percentiles, s/op:
+      p(0.0000) =    105.408 s/op
+     p(50.0000) =    107.007 s/op
+     p(90.0000) =    108.982 s/op
+    p(100.0000) =    109.048 s/op
+
+
+# Parameters: (aNumFiles = 1000, bAalEnabled = true, cEagerThreshold = 1048576)
+# Run progress: 68.75% complete, ETA 01:32:31
+# Warmup Iteration   1: 109.499 s/op
+# Warmup Iteration   2: 107.604 s/op
+# Warmup Iteration   3: 106.951 s/op
+# Warmup Iteration   4: 107.552 s/op
+# Warmup Iteration   5: 110.118 s/op
+Iteration   1: 107.554 s/op
+Iteration   2: 109.261 s/op
+Iteration   3: 109.293 s/op
+Iteration   4: 106.655 s/op
+Iteration   5: 106.685 s/op
+Iteration   6: 107.762 s/op
+Iteration   7: 106.028 s/op
+Iteration   8: 104.485 s/op
+Iteration   9: 104.374 s/op
+Iteration  10: 107.789 s/op
+
+Result "org.apache.iceberg.spark.action.IcebergDataCompactionBenchmark.rewriteDataFiles":
+  N = 10
+  mean =    106.989 ±(99.9%) 2.582 s/op
+
+  Percentiles, s/op:
+      p(0.0000) =    104.374 s/op
+     p(50.0000) =    107.119 s/op
+     p(90.0000) =    109.289 s/op
+    p(100.0000) =    109.293 s/op
+
+
+# Parameters: (aNumFiles = 2000, bAalEnabled = false, cEagerThreshold = 0)
+# Run progress: 75.00% complete, ETA 01:17:36
+# Warmup Iteration   1: 323.571 s/op
+# Warmup Iteration   2: 315.177 s/op
+# Warmup Iteration   3: 310.889 s/op
+# Warmup Iteration   4: 313.604 s/op
+# Warmup Iteration   5: 313.556 s/op
+Iteration   1: 308.807 s/op
+Iteration   2: 312.139 s/op
+Iteration   3: 320.460 s/op
+Iteration   4: 316.681 s/op
+Iteration   5: 313.359 s/op
+Iteration   6: 312.326 s/op
+Iteration   7: 310.314 s/op
+Iteration   8: 307.506 s/op
+Iteration   9: 313.229 s/op
+Iteration  10: 307.704 s/op
+
+Result "org.apache.iceberg.spark.action.IcebergDataCompactionBenchmark.rewriteDataFiles":
+  N = 10
+  mean =    312.252 ±(99.9%) 6.131 s/op
+
+  Percentiles, s/op:
+      p(0.0000) =    307.506 s/op
+     p(50.0000) =    312.233 s/op
+     p(90.0000) =    320.082 s/op
+    p(100.0000) =    320.460 s/op
+
+
+# Parameters: (aNumFiles = 2000, bAalEnabled = false, cEagerThreshold = 1048576)
+# Run progress: 81.25% complete, ETA 01:12:29
+# Warmup Iteration   1: 176.857 s/op
+# Warmup Iteration   2: 171.199 s/op
+# Warmup Iteration   3: 175.542 s/op
+# Warmup Iteration   4: 175.487 s/op
+# Warmup Iteration   5: 174.640 s/op
+Iteration   1: 177.193 s/op
+Iteration   2: 179.148 s/op
+Iteration   3: 178.349 s/op
+Iteration   4: 180.423 s/op
+Iteration   5: 182.435 s/op
+Iteration   6: 181.022 s/op
+Iteration   7: 181.100 s/op
+Iteration   8: 178.737 s/op
+Iteration   9: 180.216 s/op
+Iteration  10: 174.886 s/op
+
+Result "org.apache.iceberg.spark.action.IcebergDataCompactionBenchmark.rewriteDataFiles":
+  N = 10
+  mean =    179.351 ±(99.9%) 3.315 s/op
+
+  Percentiles, s/op:
+      p(0.0000) =    174.886 s/op
+     p(50.0000) =    179.682 s/op
+     p(90.0000) =    182.301 s/op
+    p(100.0000) =    182.435 s/op
+
+
+# Parameters: (aNumFiles = 2000, bAalEnabled = true, cEagerThreshold = 0)
+# Run progress: 87.50% complete, ETA 00:51:38
+# Warmup Iteration   1: 206.366 s/op
+# Warmup Iteration   2: 201.533 s/op
+# Warmup Iteration   3: 199.069 s/op
+# Warmup Iteration   4: 200.973 s/op
+# Warmup Iteration   5: 200.137 s/op
+Iteration   1: 197.946 s/op
+Iteration   2: 190.469 s/op
+Iteration   3: 194.485 s/op
+Iteration   4: 197.218 s/op
+Iteration   5: 196.538 s/op
+Iteration   6: 195.064 s/op
+Iteration   7: 197.721 s/op
+Iteration   8: 194.725 s/op
+Iteration   9: 194.672 s/op
+Iteration  10: 192.747 s/op
+
+Result "org.apache.iceberg.spark.action.IcebergDataCompactionBenchmark.rewriteDataFiles":
+  N = 10
+  mean =    195.158 ±(99.9%) 3.534 s/op
+
+  Percentiles, s/op:
+      p(0.0000) =    190.469 s/op
+     p(50.0000) =    194.894 s/op
+     p(90.0000) =    197.923 s/op
+    p(100.0000) =    197.946 s/op
+
+
+# Parameters: (aNumFiles = 2000, bAalEnabled = true, cEagerThreshold = 1048576)
+# Run progress: 93.75% complete, ETA 00:27:34
+# Warmup Iteration   1: 194.140 s/op
+# Warmup Iteration   2: 187.561 s/op
+# Warmup Iteration   3: 190.433 s/op
+# Warmup Iteration   4: 197.542 s/op
+# Warmup Iteration   5: 193.818 s/op
+Iteration   1: 193.200 s/op
+Iteration   2: 189.895 s/op
+Iteration   3: 192.566 s/op
+Iteration   4: 189.047 s/op
+Iteration   5: 184.237 s/op
+Iteration   6: 184.516 s/op
+Iteration   7: 190.025 s/op
+Iteration   8: 186.376 s/op
+Iteration   9: 183.409 s/op
+Iteration  10: 183.849 s/op
+
+Result "org.apache.iceberg.spark.action.IcebergDataCompactionBenchmark.rewriteDataFiles":
+  N = 10
+  mean =    187.712 ±(99.9%) 5.591 s/op
+
+  Percentiles, s/op:
+      p(0.0000) =    183.409 s/op
+     p(50.0000) =    187.711 s/op
+     p(90.0000) =    193.136 s/op
+    p(100.0000) =    193.200 s/op
+
+
+# Run complete. Total time: 07:44:09
+
+Benchmark                                        (aNumFiles)  (bAalEnabled)  (cEagerThreshold)  Mode  Cnt    Score   Error  Units
+IcebergDataCompactionBenchmark.rewriteDataFiles          250          false                  0    ss   10   45.104 ± 1.090   s/op
+IcebergDataCompactionBenchmark.rewriteDataFiles          250          false            1048576    ss   10   27.311 ± 1.117   s/op
+IcebergDataCompactionBenchmark.rewriteDataFiles          250           true                  0    ss   10   29.671 ± 0.850   s/op
+IcebergDataCompactionBenchmark.rewriteDataFiles          250           true            1048576    ss   10   30.084 ± 0.463   s/op
+IcebergDataCompactionBenchmark.rewriteDataFiles          500          false                  0    ss   10   77.788 ± 3.058   s/op
+IcebergDataCompactionBenchmark.rewriteDataFiles          500          false            1048576    ss   10   46.553 ± 1.380   s/op
+IcebergDataCompactionBenchmark.rewriteDataFiles          500           true                  0    ss   10   54.030 ± 1.508   s/op
+IcebergDataCompactionBenchmark.rewriteDataFiles          500           true            1048576    ss   10   54.365 ± 1.885   s/op
+IcebergDataCompactionBenchmark.rewriteDataFiles         1000          false                  0    ss   10  163.238 ± 6.646   s/op
+IcebergDataCompactionBenchmark.rewriteDataFiles         1000          false            1048576    ss   10   95.429 ± 2.490   s/op
+IcebergDataCompactionBenchmark.rewriteDataFiles         1000           true                  0    ss   10  107.138 ± 1.700   s/op
+IcebergDataCompactionBenchmark.rewriteDataFiles         1000           true            1048576    ss   10  106.989 ± 2.582   s/op
+IcebergDataCompactionBenchmark.rewriteDataFiles         2000          false                  0    ss   10  312.252 ± 6.131   s/op
+IcebergDataCompactionBenchmark.rewriteDataFiles         2000          false            1048576    ss   10  179.351 ± 3.315   s/op
+IcebergDataCompactionBenchmark.rewriteDataFiles         2000           true                  0    ss   10  195.158 ± 3.534   s/op
+IcebergDataCompactionBenchmark.rewriteDataFiles         2000           true            1048576    ss   10  187.712 ± 5.591   s/op
+```
+
+</details>
