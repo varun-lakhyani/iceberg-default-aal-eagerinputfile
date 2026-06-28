@@ -2,6 +2,14 @@
 
 Raw S3 access logs and JMH benchmark output for the `EagerInputFile` optimization on Apache Iceberg compaction, comparing it against the default and the S3 Analytics Accelerator Library (AAL).
 
+### Quick Links
+
+| File | Description |
+|------|-------------|
+| [jmh-benchmark-results.txt](jmh-benchmark-results.txt) | Raw JMH text output |
+| [network-calls-per-file.md](network-calls-per-file.md) | S3 GET/HEAD call counts derived from bucket logs |
+| [raw-s3-access-logs/](raw-s3-access-logs/) | Raw S3 server access logs |
+
 ---
 
 ### Benchmark Setup (JMH)
@@ -52,13 +60,3 @@ The number of GET/HEAD requests observed from the S3 bucket logs is computed as:
 | EagerInputFile = true | 1 | 0 | **1** |
 
 Full per-file breakdown across all file counts: [network-calls-per-file.md](network-calls-per-file.md)
-
----
-
-### Raw logs and Results 
-
-| File | Description |
-|------|-------------|
-| [jmh-benchmark-results.txt](jmh-benchmark-results.txt) | Raw JMH text output |
-| [network-calls-per-file.md](network-calls-per-file.md) | S3 GET/HEAD call counts derived from bucket logs |
-| [raw-s3-access-logs/](raw-s3-access-logs/) | Raw S3 server access logs (sensitive fields redacted) |
